@@ -1,0 +1,21 @@
+[package]
+name = "t2022-cli"
+version = "0.1.0"
+authors = ["mardragon <mrmardragon@gmail.com>"]
+description = "Token 2022 Playground CLI"
+edition = "2021"
+keywords = ["solana", "spl", "token-2022", "cl"]
+license = "Apache-2.0"
+
+
+[dependencies]
+clap = { version = "=3.2.22", features = ["cargo"] }
+solana-account-decoder = "=1.11.10"
+solana-cli-config = "=1.11.10"
+solana-client = "=1.11.10"
+solana-clap-utils = "=1.11.10"
+solana-sdk = "=1.11.10"
+solana-transaction-status = "=1.11.10"
+solana-program = "=1.11.10"
+spl-token-2022 = { version = "=0.4.2", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "=1.1.1", features = ["no-entrypoint"] }
