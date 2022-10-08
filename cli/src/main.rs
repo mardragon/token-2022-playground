@@ -165,7 +165,7 @@ fn account_info(rpc_client: RpcClient, matches: &ArgMatches) -> Result<(), Error
 
     if extensions.contains(&ExtensionType::TransferFeeAmount) {
         let transfer_fee_amount = state.get_extension::<TransferFeeAmount>()?;
-        println!("Witheld transfer fee amount: {}", u64::from(transfer_fee_amount.withheld_amount));
+        println!("Withheld transfer fee amount: {}", u64::from(transfer_fee_amount.withheld_amount));
     }
     Ok(())
 }
