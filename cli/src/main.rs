@@ -28,6 +28,12 @@ fn main() {
                 .arg(Arg::new("TOKEN_AMOUNT").required(true).index(2))
         )
         .subcommand(
+            Command::new("transfer")
+                .arg(Arg::new("TOKEN_ADDRESS").required(true).index(1))
+                .arg(Arg::new("TOKEN_AMOUNT").required(true).index(2))
+                .arg(Arg::new("RECIPIENT_ADDRESS").required(true).index(3))
+        )
+        .subcommand(
             Command::new("account-info")
                 .arg(Arg::new("TOKEN_ACCOUNT_ADDRESS").required(true).index(1))
         );
@@ -47,6 +53,9 @@ fn main() {
         }
         Some(("mint", matches)) => {
             mint(rpc_client, payer, matches)
+        }
+        Some(("transfer", matches)) => {
+            transfer(rpc_client, payer, matches)
         }
         Some(("account-info", matches)) => {
             account_info(rpc_client, matches)
@@ -139,6 +148,58 @@ fn mint(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Result<(
         &payer.pubkey(),
         &[],
         amount
+    )?);
+
+    let transaction = Transaction::new_signed_with_payer(
+        instructions.deref(),
+        Some(&payer.pubkey()),
+        &[&payer],
+        rpc_client.get_latest_blockhash()?,
+    );
+
+    send_tx(&transaction, &rpc_client);
+    Ok(())
+}
+
+fn transfer(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Result<(), Error> {
+    let token_address = Pubkey::from_str(matches.value_of("TOKEN_ADDRESS").unwrap())
+        .map_err(|_| format!("Invalid token address"))?;
+
+    let recipient_address = Pubkey::from_str(matches.value_of("RECIPIENT_ADDRESS").unwrap())
+        .map_err(|_| format!("Invalid token address"))?;
+
+    let state_data = rpc_client.get_account_data(&token_address)?;
+    let mint_state = StateWithExtensions::<Mint>::unpack(state_data.as_ref())?.base;
+
+    let amount = spl_token_2022::ui_amount_to_amount(
+        f64::from_str(matches.value_of("TOKEN_AMOUNT").unwrap())?,
+        mint_state.decimals);
+
+    let source_token_account = spl_associated_token_account::get_associated_token_address_with_program_id(&payer.pubkey(), &token_address, &spl_token_2022::id());
+
+    let recipient_token_account = spl_associated_token_account::get_associated_token_address_with_program_id(&recipient_address, &token_address, &spl_token_2022::id());
+    println!("Target token account: {:?}", recipient_token_account);
+
+    let mut instructions = vec![];
+
+    if rpc_client.get_account(&recipient_token_account).is_err() {
+        instructions.push(spl_associated_token_account::instruction::create_associated_token_account(
+            &payer.pubkey(),
+            &recipient_address,
+            &token_address,
+            &spl_token_2022::id(),
+        ));
+    }
+
+    instructions.push(spl_token_2022::instruction::transfer_checked(
+        &spl_token_2022::id(),
+        &source_token_account,
+        &token_address,
+        &recipient_token_account,
+        &payer.pubkey(),
+        &[],
+        amount,
+        mint_state.decimals
     )?);
 
     let transaction = Transaction::new_signed_with_payer(
