@@ -1,16 +1,17 @@
 use std::ops::Deref;
-use clap::Command;
+use std::str::FromStr;
+use clap::{Arg, ArgMatches, Command};
 use solana_cli_config::Config;
 use solana_client::rpc_client::RpcClient;
-use solana_client::rpc_config::{RpcSendTransactionConfig, RpcTransactionConfig};
-use solana_program::program_pack::Pack;
+use solana_client::rpc_config::{RpcSendTransactionConfig};
+use solana_program::pubkey::Pubkey;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::signature::{Keypair, read_keypair_file};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
-use spl_token_2022::state::Mint;
-use spl_token_2022::extension::ExtensionType;
-use spl_token_2022::extension::ExtensionType::TransferFeeConfig;
+use spl_token_2022::state::{Account, Mint};
+use spl_token_2022::extension::{ExtensionType, StateWithExtensions};
+use spl_token_2022::extension::transfer_fee::TransferFeeAmount;
 
 pub(crate) type Error = Box<dyn std::error::Error>;
 
@@ -20,6 +21,15 @@ fn main() {
         .subcommand_required(true)
         .subcommand(
             Command::new("create-token")
+        )
+        .subcommand(
+            Command::new("mint")
+                .arg(Arg::new("TOKEN_ADDRESS").required(true).index(1))
+                .arg(Arg::new("TOKEN_AMOUNT").required(true).index(2))
+        )
+        .subcommand(
+            Command::new("account-info")
+                .arg(Arg::new("TOKEN_ACCOUNT_ADDRESS").required(true).index(1))
         );
 
     let matches = cmd.get_matches();
@@ -35,6 +45,12 @@ fn main() {
         Some(("create-token", _)) => {
             create_token(rpc_client, payer)
         }
+        Some(("mint", matches)) => {
+            mint(rpc_client, payer, matches)
+        }
+        Some(("account-info", matches)) => {
+            account_info(rpc_client, matches)
+        }
         _ => unreachable!(),
     };
 
@@ -45,11 +61,10 @@ fn main() {
 
 
 fn create_token(rpc_client: RpcClient, payer: Keypair) -> Result<(), Error> {
-
     let mint_keypair = Keypair::new();
     println!("Mint: {:?}", mint_keypair.pubkey());
 
-    let space = ExtensionType::get_account_len::<Mint>(&[TransferFeeConfig]);
+    let space = ExtensionType::get_account_len::<Mint>(&[ExtensionType::TransferFeeConfig]);
 
     let mut instructions = vec![];
     instructions.push(solana_program::system_instruction::create_account(
@@ -66,7 +81,7 @@ fn create_token(rpc_client: RpcClient, payer: Keypair) -> Result<(), Error> {
         Some(&payer.pubkey()),
         Some(&payer.pubkey()),
         123,
-        u64::MAX
+        u64::MAX,
     )?);
 
 
@@ -75,7 +90,7 @@ fn create_token(rpc_client: RpcClient, payer: Keypair) -> Result<(), Error> {
         &mint_keypair.pubkey(),
         &payer.pubkey(),
         None,
-        6
+        6,
     )?);
 
 
@@ -86,13 +101,81 @@ fn create_token(rpc_client: RpcClient, payer: Keypair) -> Result<(), Error> {
         rpc_client.get_latest_blockhash()?,
     );
 
+    send_tx(&transaction, &rpc_client);
+    Ok(())
+}
+
+
+fn mint(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Result<(), Error> {
+    let token_address = Pubkey::from_str(matches.value_of("TOKEN_ADDRESS").unwrap())
+        .map_err(|_| format!("Invalid token address"))?;
+
+    let state_data = rpc_client.get_account_data(&token_address)?;
+    let mint_state = StateWithExtensions::<Mint>::unpack(state_data.as_ref())?.base;
+
+    let amount = spl_token_2022::ui_amount_to_amount(
+        f64::from_str(matches.value_of("TOKEN_AMOUNT").unwrap())?,
+        mint_state.decimals);
+
+    let token_account = spl_associated_token_account::get_associated_token_address_with_program_id(&payer.pubkey(), &token_address, &spl_token_2022::id());
+    println!("Target token account: {:?}", token_account);
+
+    let mut instructions = vec![];
+
+
+    if rpc_client.get_account(&token_account).is_err() {
+        instructions.push(spl_associated_token_account::instruction::create_associated_token_account(
+            &payer.pubkey(),
+            &payer.pubkey(),
+            &token_address,
+            &spl_token_2022::id(),
+        ));
+    }
+
+    instructions.push(spl_token_2022::instruction::mint_to(
+        &spl_token_2022::id(),
+        &token_address,
+        &token_account,
+        &payer.pubkey(),
+        &[],
+        amount
+    )?);
+
+    let transaction = Transaction::new_signed_with_payer(
+        instructions.deref(),
+        Some(&payer.pubkey()),
+        &[&payer],
+        rpc_client.get_latest_blockhash()?,
+    );
+
+    send_tx(&transaction, &rpc_client);
+    Ok(())
+}
+
+fn account_info(rpc_client: RpcClient, matches: &ArgMatches) -> Result<(), Error> {
+    let address = Pubkey::from_str(matches.value_of("TOKEN_ACCOUNT_ADDRESS").unwrap())
+        .map_err(|_| format!("Invalid token account address"))?;
+
+    let state_data = rpc_client.get_account_data(&address)?;
+    let state = StateWithExtensions::<Account>::unpack(state_data.as_ref())?;
+    println!("{:?}", state.base);
+
+    let extensions = state.get_extension_types()?;
+    println!("Extensions: {:?}", extensions);
+
+    if extensions.contains(&ExtensionType::TransferFeeAmount) {
+        let transfer_fee_amount = state.get_extension::<TransferFeeAmount>()?;
+        println!("Witheld transfer fee amount: {}", u64::from(transfer_fee_amount.withheld_amount));
+    }
+    Ok(())
+}
+
+
+fn send_tx(transaction: &Transaction, rpc_client: &RpcClient) {
     let mut config = RpcSendTransactionConfig::default();
     config.skip_preflight = true;
+
     let transaction_result = rpc_client.send_transaction_with_config(&transaction, config);
 
-    //let transaction_result = rpc_client.send_and_confirm_transaction(&transaction);
     println!("Transaction {:?}", transaction_result);
-
-
-    Ok(())
 }
