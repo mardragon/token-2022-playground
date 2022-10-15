@@ -21,6 +21,7 @@ fn main() {
         .subcommand_required(true)
         .subcommand(
             Command::new("create-token")
+                .arg(Arg::new("TOKEN_KEYPAIR").required(false).index(1))
         )
         .subcommand(
             Command::new("mint")
@@ -48,8 +49,8 @@ fn main() {
     let payer = read_keypair_file(cli_config.keypair_path).unwrap();
 
     let result = match matches.subcommand() {
-        Some(("create-token", _)) => {
-            create_token(rpc_client, payer)
+        Some(("create-token", matches)) => {
+            create_token(rpc_client, payer, matches)
         }
         Some(("mint", matches)) => {
             mint(rpc_client, payer, matches)
@@ -69,8 +70,9 @@ fn main() {
 }
 
 
-fn create_token(rpc_client: RpcClient, payer: Keypair) -> Result<(), Error> {
-    let mint_keypair = Keypair::new();
+fn create_token(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Result<(), Error> {
+    let mint_keypair = matches.value_of("TOKEN_KEYPAIR")
+        .map_or(Ok(Keypair::new()), |path| { read_keypair_file(path) })?;
     println!("Mint: {:?}", mint_keypair.pubkey());
 
     let space = ExtensionType::get_account_len::<Mint>(&[ExtensionType::TransferFeeConfig]);
@@ -147,7 +149,7 @@ fn mint(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Result<(
         &token_account,
         &payer.pubkey(),
         &[],
-        amount
+        amount,
     )?);
 
     let transaction = Transaction::new_signed_with_payer(
@@ -199,7 +201,7 @@ fn transfer(rpc_client: RpcClient, payer: Keypair, matches: &ArgMatches) -> Resu
         &payer.pubkey(),
         &[],
         amount,
-        mint_state.decimals
+        mint_state.decimals,
     )?);
 
     let transaction = Transaction::new_signed_with_payer(
