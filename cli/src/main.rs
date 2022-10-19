@@ -11,7 +11,7 @@ use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use spl_token_2022::state::{Account, Mint};
 use spl_token_2022::extension::{ExtensionType, StateWithExtensions};
-use spl_token_2022::extension::transfer_fee::TransferFeeAmount;
+use spl_token_2022::extension::transfer_fee::{TransferFeeAmount, TransferFeeConfig};
 
 pub(crate) type Error = Box<dyn std::error::Error>;
 
@@ -37,6 +37,10 @@ fn main() {
         .subcommand(
             Command::new("account-info")
                 .arg(Arg::new("TOKEN_ACCOUNT_ADDRESS").required(true).index(1))
+        )
+        .subcommand(
+            Command::new("mint-info")
+                .arg(Arg::new("MINT_ACCOUNT_ADDRESS").required(true).index(1))
         );
 
     let matches = cmd.get_matches();
@@ -60,6 +64,9 @@ fn main() {
         }
         Some(("account-info", matches)) => {
             account_info(rpc_client, matches)
+        }
+        Some(("mint-info", matches)) => {
+            mint_info(rpc_client, matches)
         }
         _ => unreachable!(),
     };
@@ -230,6 +237,25 @@ fn account_info(rpc_client: RpcClient, matches: &ArgMatches) -> Result<(), Error
         let transfer_fee_amount = state.get_extension::<TransferFeeAmount>()?;
         println!("Withheld transfer fee amount: {}", u64::from(transfer_fee_amount.withheld_amount));
     }
+    Ok(())
+}
+
+fn mint_info(rpc_client: RpcClient, matches: &ArgMatches) -> Result<(), Error> {
+    let address = Pubkey::from_str(matches.value_of("MINT_ACCOUNT_ADDRESS").unwrap())
+        .map_err(|_| format!("Invalid token account address"))?;
+
+    let state_data = rpc_client.get_account_data(&address)?;
+    let state = StateWithExtensions::<Mint>::unpack(state_data.as_ref())?;
+    println!("{:?}", state.base);
+
+    let extensions = state.get_extension_types()?;
+    println!("Extensions: {:?}", extensions);
+
+    if extensions.contains(&ExtensionType::TransferFeeConfig) {
+        let transfer_fee_config = state.get_extension::<TransferFeeConfig>()?;
+        println!("{:?}", transfer_fee_config);
+    }
+
     Ok(())
 }
 
